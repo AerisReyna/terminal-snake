@@ -3,7 +3,7 @@ extern crate termion;
 
 use rand::rngs::ThreadRng;
 use std::io::{stdout, Write, Stdout};
-use termion::{clear, async_stdin, AsyncReader};
+use termion::{clear, async_stdin, AsyncReader, terminal_size};
 use termion::raw::{IntoRawMode, RawTerminal};
 use termion::input::{TermRead, Keys};
 use termion::event::Key;
@@ -49,41 +49,58 @@ struct BoardPiece {
 
 fn main() {
     // Game component setup.
-    let game_size = 30usize; // If this is changed, be sure to check length of hello
-                                      // message in start screen.
-    let mut board = vec![vec![BoardPiece { state: State::Empty, position: 0 }; game_size * 2 + 1];
-                         game_size];
-    let mut direction;
-    let mut snake_length;
+    let term_size = terminal_size().unwrap().1;
+    // Determine game size based on screen size and make it close to a rectangle.
+    let game_size = Point{
+        x: term_size as usize * 2 - 5, // x should be odd
+        y: term_size as usize - 5 // Buffer compensates for borders and makes it look cleaner
+    };
 
+    let mut board =
+        vec![vec![BoardPiece { state: State::Empty, position: 0 }; game_size.x]; game_size.y];
+
+    let mut direction = Direction::Down;;
+    let mut snake_length = 3; // default snake length
+
+    // Non-blocking key press reader.
     let mut stdin = async_stdin().keys();
     let mut stdout = stdout().into_raw_mode().unwrap();
 
-
-    initialize_game(&mut board, &mut direction, &snake_length);
+    // Adds top, bottom, and side borders to game.
     add_border(&mut board);
-    start_screen(&mut stdin, &mut stdout, &game_size);
+    // Places the snake and apple on the board and sets the snake's initial movement direction.
+    initialize_game(&mut board, &mut direction, &snake_length);
+    // Simple intro screen.
+    start_screen(&mut stdin, &mut stdout);
+    // Flag to break the main loop. Initially used an exit statement, but this put the terminal in
+    // and unusable state at exit.
     let mut end_game;
     'main: loop {
         print_board(&board, &mut stdout);
-        // This is the only way to exit the program and retain the ability to type to the terminal.
+        // Checks for player input and sets the direction accordingly. Arrows or WASD.
         check_input(&mut stdin, &mut direction);
+        // Returns true if player hits a wall or the end of the snake.
         end_game = move_snake(&mut board, &mut snake_length, &direction);
         if end_game {
+            // Displays the ending score and returns true if the player wants to play again.
             let play_again = game_over(&mut stdin, &mut stdout, &snake_length);
             if !play_again {
                 break 'main;
             } else {
+                // Changes everything but the borders into Empty pieces.
                 clear_board(&mut board);
+                // Reinitialize and start fresh.
                 snake_length = 3;
                 initialize_game(&mut board, &mut direction, &snake_length);
-                start_screen(&mut stdin, &mut stdout, &game_size);
+                start_screen(&mut stdin, &mut stdout);
             }
         }
         wait();
     }
 }
 
+
+/// Replaces all non-border pieces with Empty BoardPieces.
 fn clear_board(board: &mut Vec<Vec<BoardPiece>>) {
     for i in 0..board.len() {
         for j in 0..board[i].len() {
@@ -96,19 +113,15 @@ fn clear_board(board: &mut Vec<Vec<BoardPiece>>) {
     }
 }
 
+//HERE!
 fn initialize_game(board: &mut Vec<Vec<BoardPiece>>, direction: &mut Direction, snake_length: &usize) {
     // Initial random placement of snake and first apple.
     let mut rng = rand::thread_rng();
-    let mut x = 1usize;
-    // x coordinate must be an even number. The x skips inserts an extra blank space between
-    // the snake pieces so that the terminal display does not appear horizontally.
-    while x % 2 != 0 {
-        // x and y are generated with a buffer so that the snake doesn't end up in the wall.
-        x = rng.gen_range(*snake_length * 2, board[0].len() - *snake_length * 2)
-    }
+    let bound = board[1].len() / 2;
+    let mut x = gen_odd_number(&mut rng, bound - *snake_length, bound + *snake_length);
     let mut head_pos = Point{x: 0, y: 0};
     head_pos.x = x;
-    head_pos.y = rng.gen_range(*snake_length, board.len() - *snake_length);
+    head_pos.y = rng.gen_range(board.len() / 2 - *snake_length, board.len() / 2  + *snake_length);
     board[head_pos.y][head_pos.x].state = State::Snake;
     board[head_pos.y][head_pos.x].position = 1;
     *direction = rng.gen();
@@ -140,6 +153,15 @@ fn initialize_game(board: &mut Vec<Vec<BoardPiece>>, direction: &mut Direction, 
     spawn_apple(&mut *board, &mut rng);
 }
 
+fn gen_odd_number(rng: &mut impl Rng, lower: usize, upper: usize) -> usize {
+    let mut x = 2usize;
+    while x % 2 == 0 {
+        // x and y are generated with a buffer so that the snake doesn't end up in the wall.
+        x = rng.gen_range(lower, upper)
+    }
+    x
+}
+
 fn add_border(board: &mut Vec<Vec<BoardPiece>>) {
     // Insertion of top and bottom borders.
     let mut top_border = Vec::new();
@@ -167,9 +189,9 @@ fn add_border(board: &mut Vec<Vec<BoardPiece>>) {
 
 fn spawn_apple(board: &mut Vec<Vec<BoardPiece>>, rng: &mut ThreadRng) {
     loop {
-        let mut x = 1;
-        while x % 2 != 0 {
-            x = rng.gen_range(1, board[0].len() - 2)
+        let mut x = 2;
+        while x % 2 == 0 {
+            x = rng.gen_range(0, board[0].len() - 2)
         }
         let y = rng.gen_range(0, board.len());
         if board[y][x].state == State::Empty {
@@ -179,26 +201,20 @@ fn spawn_apple(board: &mut Vec<Vec<BoardPiece>>, rng: &mut ThreadRng) {
     }
 }
 
-fn start_screen(input: &mut Keys<AsyncReader>, terminal: &mut RawTerminal<Stdout>, size: &usize) {
+fn start_screen(input: &mut Keys<AsyncReader>, terminal: &mut RawTerminal<Stdout>) {
     write!(&mut *terminal, "{}", "\u{256D}").unwrap();
-    for _ in 1..size * 2 - 1 {
+    let mut hello: Vec<char> = "Welcome to Terminal Snake! Press Space to start.".chars().collect();
+    for _ in 0..hello.len() {
         write!(&mut *terminal, "{}", "\u{2500}").unwrap();
     }
     write!(&mut *terminal, "{}", "\u{256E}\r\n").unwrap();
     write!(&mut *terminal, "{}", "\u{2502}").unwrap();
-    let mut hello: Vec<char> = "Welcome to Terminal Snake! Press Space to start.".chars().collect();
-    for _ in 0..(size * 2 - hello.len()) / 2 {
-        hello.insert(0, ' ');
-    }
-    for _ in 0..(size * 2 - hello.len()) / 2 + 1 {
-        hello.push(' ');
-    }
     for c in hello.iter() {
         write!(&mut *terminal, "{}", c).unwrap();
     }
     write!(&mut *terminal, "{}", "\u{2502}\r\n").unwrap();
     write!(&mut *terminal, "{}", "\u{2570}").unwrap();
-    for _ in 1..size * 2 - 1 {
+    for _ in 0..hello.len() {
         write!(&mut *terminal, "{}", "\u{2500}").unwrap();
     }
     write!(&mut *terminal, "{}", "\u{256F}\r\n").unwrap();
@@ -298,7 +314,7 @@ fn move_snake(board: &mut Vec<Vec<BoardPiece>>, snake_length: &mut usize, direct
             }
         }
         Direction::Left => {
-            if head.x == 0 {
+            if head.x == 1 {
                 return true;
             }
             match board[head.y][head.x - 2].state {
