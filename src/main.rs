@@ -1,3 +1,7 @@
+// Could use significant improvements. Most things should be moved out of main. Does not work
+// well in a TTY. I'm moving on to my next project for now until I have learned a little more.
+// May end up rewriting completely.
+
 extern crate rand;
 extern crate termion;
 
@@ -113,43 +117,42 @@ fn clear_board(board: &mut Vec<Vec<BoardPiece>>) {
     }
 }
 
-//HERE!
+
 fn initialize_game(board: &mut Vec<Vec<BoardPiece>>, direction: &mut Direction, snake_length: &usize) {
     // Initial random placement of snake and first apple.
     let mut rng = rand::thread_rng();
-    let bound = board[1].len() / 2;
-    let mut x = gen_odd_number(&mut rng, bound - *snake_length, bound + *snake_length);
-    let mut head_pos = Point{x: 0, y: 0};
-    head_pos.x = x;
-    head_pos.y = rng.gen_range(board.len() / 2 - *snake_length, board.len() / 2  + *snake_length);
-    board[head_pos.y][head_pos.x].state = State::Snake;
-    board[head_pos.y][head_pos.x].position = 1;
+    let x_bound = board[1].len() / 2;
+    // The x value of the snake will only ever be odd because of the space skipping.
+    let y_bound = board.len() / 2;
+    let head_pos = Point {
+        x: gen_odd_number(&mut rng, x_bound - *snake_length, x_bound + *snake_length),
+        y: rng.gen_range(y_bound - *snake_length, y_bound + *snake_length),
+    };
+    // Change to BoardPiece at head_pos to a snake piece.
+    board[head_pos.y][head_pos.x] = BoardPiece {
+        state: State::Snake,
+        position: 1,
+    };
+    // Generate a random direction for the snake to travel.
     *direction = rng.gen();
-    let mut second = Point{x: head_pos.x, y: head_pos.y};
-    let mut third = Point{x: head_pos.x, y: head_pos.y};
-    // Position pieces of the snake in the opposite direction that it is facing.
-    match *direction {
-        Direction::Down => {
-            second.y = head_pos.y - 1;
-            third.y = head_pos.y - 2;
+    // Generate the next two pieces. Could possibly be made able to generate n snake pieces
+    // instead of fixed.
+    for i in 1..*snake_length {
+        let mut snake_part_pos = Point {
+            x: head_pos.x,
+            y: head_pos.y,
+        };
+        match *direction {
+            Direction::Up => snake_part_pos.y += i,
+            Direction::Down => snake_part_pos.y -= i,
+            Direction::Left => snake_part_pos.x += (i * 2),
+            Direction::Right => snake_part_pos.x -= (i * 2),
         }
-        Direction::Up => {
-            second.y = head_pos.y + 1;
-            third.y = head_pos.y + 2;
-        }
-        Direction::Right => {
-            second.x = head_pos.x - 2;
-            third.x = head_pos.x - 4;
-        }
-        Direction::Left => {
-            second.x = head_pos.x + 2;
-            third.x = head_pos.x + 4;
-        }
+        board[snake_part_pos.y][snake_part_pos.x] = BoardPiece {
+            state: State::Snake,
+            position: i + 1,
+        };
     }
-    board[second.y][second.x].state = State::Snake;
-    board[second.y][second.x].position = 2;
-    board[third.y][third.x].state = State::Snake;
-    board[third.y][third.x].position = 3;
     spawn_apple(&mut *board, &mut rng);
 }
 
@@ -389,7 +392,7 @@ fn game_over(input: &mut Keys<AsyncReader>, terminal: &mut RawTerminal<Stdout>, 
         write!(&mut *terminal, "{}", "\u{2500}").unwrap();
     }
     write!(&mut *terminal, "{}", "\u{256F}\r\n").unwrap();
-    'a: loop {
+    loop {
         match input.next() {
             Some(Ok(Key::Char(' '))) => return true,
             Some(Ok(Key::Esc)) => return false,
